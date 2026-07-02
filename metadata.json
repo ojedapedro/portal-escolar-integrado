@@ -1,0 +1,6 @@
+{
+  "name": "Escáner de Asistencia QR",
+  "description": "Aplicación web para registrar la asistencia diaria de alumnos en tiempo real escaneando códigos QR.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
