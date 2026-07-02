@@ -3,9 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { Alumno, HistorialItem } from '../types';
-import { Plus, GraduationCap, Download, QrCode, ClipboardList, ChevronRight, X, Sparkles, PlusCircle, Trash, Star } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Alumno, HistorialItem, Asistencia } from '../types';
+import { getAsistencias, addAsistencia, deleteAsistencia } from '../firebase';
+import { 
+  Plus, 
+  GraduationCap, 
+  Download, 
+  QrCode, 
+  ClipboardList, 
+  ChevronRight, 
+  X, 
+  Sparkles, 
+  PlusCircle, 
+  Trash, 
+  Star, 
+  Mail,
+  Calendar,
+  Clock,
+  AlertTriangle,
+  CheckCircle,
+  Search,
+  Filter,
+  RefreshCw,
+  FileSpreadsheet
+} from 'lucide-react';
 import StudentQRCard from './StudentQRCard';
 
 interface AlumnosManagerProps {
@@ -55,6 +77,71 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
   const [calificacion, setCalificacion] = useState('9.0');
   const [observaciones, setObservaciones] = useState('');
 
+  // Attendance history kárdex state
+  const [allAsistencias, setAllAsistencias] = useState<Asistencia[]>([]);
+  const [isLoadingAsistencias, setIsLoadingAsistencias] = useState(false);
+  const [activeSubTab, setActiveSubTab] = useState<'academico' | 'asistencia'>('academico');
+
+  // Manual Attendance Form State
+  const [showManualAttendanceForm, setShowManualAttendanceForm] = useState(false);
+  const [manualDate, setManualDate] = useState(new Date().toISOString().split('T')[0]);
+  const [manualTime, setManualTime] = useState('07:50');
+  const [manualStatus, setManualStatus] = useState<'Asistió' | 'Retardo'>('Asistió');
+
+  const fetchAsistencias = async () => {
+    setIsLoadingAsistencias(true);
+    try {
+      const list = await getAsistencias();
+      setAllAsistencias(list);
+    } catch (err) {
+      console.error("Error al cargar asistencias:", err);
+    } finally {
+      setIsLoadingAsistencias(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAsistencias();
+  }, [selectedAlumno]);
+
+  const handleAddManualAsistencia = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAlumno) return;
+
+    const nuevaAsist: Asistencia = {
+      alumnoID: selectedAlumno.id,
+      nombreAlumno: `${selectedAlumno.nombre} ${selectedAlumno.apellidos}`,
+      grado: selectedAlumno.grado,
+      fecha: manualDate,
+      horaExacta: `${manualTime}:00`,
+      estado: manualStatus
+    };
+
+    try {
+      await addAsistencia(nuevaAsist);
+      await fetchAsistencias();
+      setShowManualAttendanceForm(false);
+    } catch (err) {
+      console.error("Error al registrar asistencia manual:", err);
+    }
+  };
+
+  const handleDeleteAsistencia = async (id: string) => {
+    if (!confirm("¿Está seguro de que desea eliminar este registro de asistencia?")) return;
+    try {
+      await deleteAsistencia(id);
+      await fetchAsistencias();
+    } catch (err) {
+      console.error("Error al eliminar asistencia:", err);
+    }
+  };
+
+  const studentAsistencias = allAsistencias.filter(as => as.alumnoID === selectedAlumno?.id);
+  const totalAsistencias = studentAsistencias.length;
+  const totalATiempo = studentAsistencias.filter(as => as.estado === 'Asistió').length;
+  const totalRetardos = studentAsistencias.filter(as => as.estado === 'Retardo').length;
+  const porcentajePuntualidad = totalAsistencias > 0 ? Math.round((totalATiempo / totalAsistencias) * 100) : 100;
+
   // Form State
   const [nombre, setNombre] = useState('');
   const [apellidos, setApellidos] = useState('');
@@ -62,6 +149,7 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
   const [grupo, setGrupo] = useState(GRUPOS[0]);
   const [foto, setFoto] = useState(AVATAR_PRESETS[0]);
   const [customId, setCustomId] = useState('');
+  const [correoPadre, setCorreoPadre] = useState('');
 
   const handleGenerateId = () => {
     const randomNum = Math.floor(1000 + Math.random() * 9000);
@@ -81,8 +169,22 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
       grado,
       grupo,
       foto,
+      parentEmail: correoPadre.trim() || undefined,
       historialAcademico: []
     };
+
+    // Synchronize to correos_padres in localStorage for full integration with alerts system
+    if (correoPadre.trim()) {
+      const savedEmails = localStorage.getItem('correos_padres');
+      let emailsObj: { [key: string]: string } = {};
+      if (savedEmails) {
+        try {
+          emailsObj = JSON.parse(savedEmails);
+        } catch (err) {}
+      }
+      emailsObj[finalId] = correoPadre.trim();
+      localStorage.setItem('correos_padres', JSON.stringify(emailsObj));
+    }
 
     onAddAlumno(nuevo);
     setSelectedAlumno(nuevo);
@@ -92,6 +194,7 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
     setNombre('');
     setApellidos('');
     setCustomId('');
+    setCorreoPadre('');
   };
 
   const handleAddHistorial = (e: React.FormEvent) => {
@@ -278,141 +381,385 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
                   </div>
                 </div>
 
-                {/* Right Card: Historial Académico */}
-                <div className="md:col-span-7 bg-white border border-slate-100 rounded-2xl p-5 space-y-4">
-                  <div className="flex justify-between items-center pb-3 border-b border-slate-100">
-                    <div>
-                      <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1">
-                        <ClipboardList className="w-4 h-4 text-indigo-500" /> Historial Académico Básico
-                      </h4>
-                      <p className="text-[10px] text-slate-400">Asignaturas y evaluaciones registradas</p>
-                    </div>
-
+                {/* Right Card: Historial Académico y Personal */}
+                <div className="md:col-span-7 bg-white border border-slate-100 rounded-2xl p-5 space-y-4 flex flex-col">
+                  
+                  {/* Navegación de Carpetas / Historial */}
+                  <div className="flex border-b border-slate-100 gap-2 pb-0.5">
                     <button
-                      onClick={() => setShowGradeForm(!showGradeForm)}
-                      className="text-xs text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 cursor-pointer"
+                      onClick={() => setActiveSubTab('academico')}
+                      className={`pb-2.5 px-2 text-xs font-bold transition-all border-b-2 -mb-[2px] flex items-center gap-1.5 cursor-pointer ${
+                        activeSubTab === 'academico'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-400 hover:text-slate-600'
+                      }`}
                     >
-                      <PlusCircle className="w-4 h-4" /> {showGradeForm ? 'Cerrar' : 'Agregar Nota'}
+                      <ClipboardList className="w-4 h-4" />
+                      <span>Historial Académico</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveSubTab('asistencia')}
+                      className={`pb-2.5 px-2 text-xs font-bold transition-all border-b-2 -mb-[2px] flex items-center gap-1.5 cursor-pointer ${
+                        activeSubTab === 'asistencia'
+                          ? 'border-blue-600 text-blue-600'
+                          : 'border-transparent text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      <Calendar className="w-4 h-4" />
+                      <span>Historial Personal (Kárdex)</span>
                     </button>
                   </div>
 
-                  {/* Add grade form inline */}
-                  {showGradeForm && (
-                    <form onSubmit={handleAddHistorial} className="bg-blue-50/30 p-4 rounded-xl border border-blue-100 space-y-3 animate-in slide-in-from-top-2 duration-150">
-                      <h5 className="text-[10px] font-black uppercase text-blue-800 tracking-wider">Registrar Asignatura</h5>
-                      
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-500 font-bold">Materia *</label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="Ej. Matemáticas"
-                            value={materia}
-                            onChange={(e) => setMateria(e.target.value)}
-                            className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500"
-                          />
+                  {activeSubTab === 'academico' ? (
+                    <div className="space-y-4 animate-in fade-in duration-200">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1">
+                            📋 Calificaciones del Alumno
+                          </h4>
+                          <p className="text-[10px] text-slate-400">Asignaturas y evaluaciones registradas</p>
                         </div>
 
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-500 font-bold">Ciclo Escolar</label>
-                          <select
-                            value={ciclo}
-                            onChange={(e) => setCiclo(e.target.value)}
-                            className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
-                          >
-                            <option value="2025-2026">2025-2026</option>
-                            <option value="2024-2025">2024-2025</option>
-                          </select>
-                        </div>
+                        <button
+                          onClick={() => setShowGradeForm(!showGradeForm)}
+                          className="text-xs text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <PlusCircle className="w-4 h-4" /> {showGradeForm ? 'Cerrar' : 'Agregar Nota'}
+                        </button>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] text-slate-500 font-bold">Calificación *</label>
-                          <input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            max="10"
-                            required
-                            value={calificacion}
-                            onChange={(e) => setCalificacion(e.target.value)}
-                            className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
-                          />
-                        </div>
-
-                        <div className="flex items-end">
-                          <button
-                            type="submit"
-                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 rounded-lg cursor-pointer"
-                          >
-                            Registrar
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[9px] text-slate-500 font-bold">Observación Académica</label>
-                        <input
-                          type="text"
-                          placeholder="Ej. Demuestra gran talento para lógica..."
-                          value={observaciones}
-                          onChange={(e) => setObservaciones(e.target.value)}
-                          className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
-                        />
-                      </div>
-                    </form>
-                  )}
-
-                  {/* Grades List */}
-                  <div className="space-y-2.5 max-h-[280px] overflow-y-auto pr-1">
-                    {selectedAlumno.historialAcademico && selectedAlumno.historialAcademico.length > 0 ? (
-                      selectedAlumno.historialAcademico.map((grade, idx) => (
-                        <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-100/80 flex justify-between items-start">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-xs font-bold text-slate-800">{grade.materia}</span>
-                              <span className="text-[9px] text-slate-400 font-mono">({grade.ciclo})</span>
+                      {/* Add grade form inline */}
+                      {showGradeForm && (
+                        <form onSubmit={handleAddHistorial} className="bg-blue-50/30 p-4 rounded-xl border border-blue-100 space-y-3 animate-in slide-in-from-top-2 duration-150">
+                          <h5 className="text-[10px] font-black uppercase text-blue-800 tracking-wider">Registrar Asignatura</h5>
+                          
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Materia *</label>
+                              <input
+                                type="text"
+                                required
+                                placeholder="Ej. Matemáticas"
+                                value={materia}
+                                onChange={(e) => setMateria(e.target.value)}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none focus:border-blue-500"
+                              />
                             </div>
-                            {grade.observaciones && (
-                              <p className="text-[10px] text-slate-500 italic">“{grade.observaciones}”</p>
-                            )}
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Ciclo Escolar</label>
+                              <select
+                                value={ciclo}
+                                onChange={(e) => setCiclo(e.target.value)}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
+                              >
+                                <option value="2025-2026">2025-2026</option>
+                                <option value="2024-2025">2024-2025</option>
+                              </select>
+                            </div>
                           </div>
 
-                          <div className="flex items-center gap-2">
-                            <span className={`text-xs font-black px-2 py-0.5 rounded font-mono ${
-                              grade.calificacion >= 9 
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
-                                : grade.calificacion >= 7.5
-                                ? 'bg-blue-50 text-blue-800 border border-blue-200'
-                                : 'bg-rose-50 text-rose-800 border border-rose-200'
-                            }`}>
-                              {grade.calificacion.toFixed(1)}
-                            </span>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Calificación *</label>
+                              <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="10"
+                                required
+                                value={calificacion}
+                                onChange={(e) => setCalificacion(e.target.value)}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
+                              />
+                            </div>
 
+                            <div className="flex items-end">
+                              <button
+                                type="submit"
+                                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs py-2.5 rounded-lg cursor-pointer"
+                              >
+                                Registrar
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] text-slate-500 font-bold">Observación Académica</label>
+                            <input
+                              type="text"
+                              placeholder="Ej. Demuestra gran talento para lógica..."
+                              value={observaciones}
+                              onChange={(e) => setObservaciones(e.target.value)}
+                              className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none"
+                            />
+                          </div>
+                        </form>
+                      )}
+
+                      {/* Grades List */}
+                      <div className="space-y-2.5 max-h-[220px] overflow-y-auto pr-1">
+                        {selectedAlumno.historialAcademico && selectedAlumno.historialAcademico.length > 0 ? (
+                          selectedAlumno.historialAcademico.map((grade, idx) => (
+                            <div key={idx} className="bg-slate-50 p-3 rounded-xl border border-slate-100/80 flex justify-between items-start">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold text-slate-800">{grade.materia}</span>
+                                  <span className="text-[9px] text-slate-400 font-mono">({grade.ciclo})</span>
+                                </div>
+                                {grade.observaciones && (
+                                  <p className="text-[10px] text-slate-500 italic">“{grade.observaciones}”</p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <span className={`text-xs font-black px-2 py-0.5 rounded font-mono ${
+                                  grade.calificacion >= 9 
+                                    ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+                                    : grade.calificacion >= 7.5
+                                    ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                                    : 'bg-rose-50 text-rose-800 border border-rose-200'
+                                }`}>
+                                  {grade.calificacion.toFixed(1)}
+                                </span>
+
+                                <button
+                                  onClick={() => handleRemoveHistorial(idx)}
+                                  className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                  title="Eliminar registro"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
+                            <Star className="w-6 h-6 text-slate-300 mx-auto mb-1 animate-bounce" />
+                            <p className="text-xs text-slate-400">Sin calificaciones registradas para el ciclo.</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Sub-sección: Correo Electrónico de Alertas del Tutor */}
+                      <div className="bg-amber-50/40 dark:bg-amber-950/10 p-4 rounded-2xl border border-amber-100/70 dark:border-amber-900/40 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <Mail className="w-4 h-4 text-amber-500" />
+                            <span className="text-xs font-bold text-slate-700 dark:text-slate-350">Contacto de Alertas (Padre / Tutor)</span>
+                          </div>
+                          <span className="text-[9px] font-black uppercase text-amber-700 dark:text-amber-400 bg-amber-100/50 dark:bg-amber-950/30 px-2 py-0.5 rounded">
+                            Notificaciones SMTP
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="email"
+                            placeholder="ejemplo@correo.com"
+                            value={selectedAlumno.parentEmail || (localStorage.getItem('correos_padres') ? (JSON.parse(localStorage.getItem('correos_padres') || '{}')[selectedAlumno.id] || '') : '')}
+                            onChange={(e) => {
+                              const updatedVal = e.target.value.trim();
+                              const updated = {
+                                ...selectedAlumno,
+                                parentEmail: updatedVal
+                              };
+                              onUpdateAlumno(updated);
+                              setSelectedAlumno(updated);
+
+                              // Also synchronize with localstorage correos_padres for backward compatibility & KPI
+                              const savedEmails = localStorage.getItem('correos_padres');
+                              let emailsObj: { [key: string]: string } = {};
+                              if (savedEmails) {
+                                try {
+                                  emailsObj = JSON.parse(savedEmails);
+                                } catch (err) {}
+                              }
+                              emailsObj[selectedAlumno.id] = updatedVal;
+                              localStorage.setItem('correos_padres', JSON.stringify(emailsObj));
+                            }}
+                            className="flex-1 text-xs bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 outline-none focus:border-amber-500 font-mono text-slate-700 dark:text-slate-300"
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-normal">
+                          Este correo electrónico se utilizará para el envío de alertas automáticas inmediatas mediante el servidor SMTP si el estudiante sobrepasa el umbral de retardos de la semana.
+                        </p>
+                      </div>
+
+                      {/* Level status warning */}
+                      <div className="bg-indigo-50/30 p-3 rounded-xl border border-indigo-100/40 text-[10px] text-indigo-800 leading-normal">
+                        💡 <strong>Asignación Escolar:</strong> Los estudiantes se promueven de grado de forma automática al finalizar el ciclo anual. El tutor escolar de {selectedAlumno.nombre} puede consultar este kárdex en línea.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4 animate-in fade-in duration-200">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <h4 className="font-bold text-xs text-slate-800 flex items-center gap-1">
+                            🗓️ Kárdex de Asistencia Detallado
+                          </h4>
+                          <p className="text-[10px] text-slate-400">Historial completo de lecturas QR e incidencias</p>
+                        </div>
+                      </div>
+
+                      {/* Stats Summary */}
+                      <div className="grid grid-cols-3 gap-2.5">
+                        <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 text-center">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase block">Puntualidad</span>
+                          <span className="text-base font-black text-emerald-750 block mt-0.5">{porcentajePuntualidad}%</span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5 leading-tight">{totalATiempo} de {totalAsistencias} asistió a tiempo</span>
+                        </div>
+
+                        <div className="bg-amber-50 p-3 rounded-xl border border-amber-100 text-center">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase block">Retardos</span>
+                          <span className="text-base font-black text-amber-750 block mt-0.5">{totalRetardos}</span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5 leading-tight">
+                            {totalRetardos >= 3 ? '🚨 Supera límite' : '✓ Debajo de límite'}
+                          </span>
+                        </div>
+
+                        <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-center">
+                          <span className="text-[9px] text-slate-500 font-bold uppercase block">Asistencias</span>
+                          <span className="text-base font-black text-blue-750 block mt-0.5">{totalAsistencias}</span>
+                          <span className="text-[8px] text-slate-400 block mt-0.5 leading-tight">Lecturas registradas</span>
+                        </div>
+                      </div>
+
+                      {/* Actions bar */}
+                      <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-xl border border-slate-100/80">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase">Bitácora Oficial</span>
+                        <button
+                          onClick={() => setShowManualAttendanceForm(!showManualAttendanceForm)}
+                          className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 transition-all cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Registro Manual
+                        </button>
+                      </div>
+
+                      {/* Manual attendance form */}
+                      {showManualAttendanceForm && (
+                        <form onSubmit={handleAddManualAsistencia} className="bg-indigo-50/30 p-3.5 rounded-xl border border-indigo-100 space-y-3 animate-in slide-in-from-top-2 duration-150">
+                          <h5 className="text-[9px] font-black uppercase text-indigo-800 tracking-wider">Añadir Registro Manual</h5>
+                          
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Fecha</label>
+                              <input
+                                type="date"
+                                required
+                                value={manualDate}
+                                onChange={(e) => setManualDate(e.target.value)}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none font-mono"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Hora Entrada</label>
+                              <input
+                                type="time"
+                                required
+                                value={manualTime}
+                                onChange={(e) => setManualTime(e.target.value)}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none font-mono"
+                              />
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <label className="text-[9px] text-slate-500 font-bold">Estado</label>
+                              <select
+                                value={manualStatus}
+                                onChange={(e) => setManualStatus(e.target.value as 'Asistió' | 'Retardo')}
+                                className="text-xs bg-white border border-slate-200 rounded-lg p-2 outline-none font-semibold text-slate-700"
+                              >
+                                <option value="Asistió">A Tiempo</option>
+                                <option value="Retardo">Retardo</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="flex justify-end gap-2 pt-1">
                             <button
-                              onClick={() => handleRemoveHistorial(idx)}
-                              className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                              title="Eliminar registro"
+                              type="button"
+                              onClick={() => setShowManualAttendanceForm(false)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-[9px] px-2.5 py-1.5 rounded-lg uppercase cursor-pointer"
                             >
-                              <X className="w-3.5 h-3.5" />
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[9px] px-2.5 py-1.5 rounded-lg uppercase cursor-pointer"
+                            >
+                              Guardar
                             </button>
                           </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-center py-8 border border-dashed border-slate-200 rounded-xl bg-slate-50/50">
-                        <Star className="w-6 h-6 text-slate-300 mx-auto mb-1 animate-bounce" />
-                        <p className="text-xs text-slate-400">Sin calificaciones registradas para el ciclo.</p>
-                      </div>
-                    )}
-                  </div>
+                        </form>
+                      )}
 
-                  {/* Level status warning */}
-                  <div className="bg-indigo-50/30 p-3 rounded-xl border border-indigo-100/40 text-[10px] text-indigo-800 leading-normal">
-                    💡 <strong>Asignación Escolar:</strong> Los estudiantes se promueven de grado de forma automática al finalizar el ciclo anual. El tutor escolar de {selectedAlumno.nombre} puede consultar este kárdex en línea.
-                  </div>
+                      {/* Timeline List of records */}
+                      <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                        {isLoadingAsistencias ? (
+                          <div className="text-center py-6">
+                            <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin mx-auto mb-1" />
+                            <p className="text-xs text-slate-400">Cargando...</p>
+                          </div>
+                        ) : studentAsistencias.length > 0 ? (
+                          studentAsistencias.map((asist) => (
+                            <div 
+                              key={asist.id} 
+                              className="bg-slate-50 p-2.5 rounded-xl border border-slate-100 flex justify-between items-center hover:bg-slate-100/50 transition-colors"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                {asist.estado === 'Asistió' ? (
+                                  <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-100">
+                                    <CheckCircle className="w-4 h-4" />
+                                  </div>
+                                ) : (
+                                  <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg border border-amber-100 animate-pulse">
+                                    <AlertTriangle className="w-4 h-4" />
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-xs font-bold text-slate-800">
+                                    {asist.estado === 'Asistió' ? 'A Tiempo' : 'Retardo Registrado'}
+                                  </span>
+                                  <div className="flex items-center gap-2 text-[9px] text-slate-400 mt-0.5 font-mono">
+                                    <span className="flex items-center gap-0.5">
+                                      <Calendar className="w-3 h-3 text-slate-400" />
+                                      {asist.fecha}
+                                    </span>
+                                    <span>•</span>
+                                    <span className="flex items-center gap-0.5">
+                                      <Clock className="w-3 h-3 text-slate-400" />
+                                      {asist.horaExacta}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <button
+                                onClick={() => asist.id && handleDeleteAsistencia(asist.id)}
+                                className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                                title="Eliminar registro"
+                              >
+                                <Trash className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-10 border border-dashed border-slate-200 rounded-xl bg-slate-50/40">
+                            <Calendar className="w-6 h-6 text-slate-300 mx-auto mb-1" />
+                            <p className="text-xs font-semibold text-slate-500">Sin historial de asistencia</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">No se encontraron lecturas de asistencia QR para este alumno.</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Level status warning */}
+                      <div className="bg-indigo-50/30 p-3 rounded-xl border border-indigo-100/40 text-[10px] text-indigo-800 leading-normal">
+                        📋 <strong>Asistencia QR Automatizada:</strong> Los retardos se calculan de acuerdo a la hora límite configurada. Si el alumno acumula 3 o más retardos en una semana, el sistema puede alertar al tutor automáticamente.
+                      </div>
+                    </div>
+                  )}
                 </div>
 
               </div>
@@ -522,6 +869,20 @@ export default function AlumnosManager({ alumnos, onAddAlumno, onUpdateAlumno }:
                   onChange={(e) => setCustomId(e.target.value)}
                   placeholder="ALUM-2026-XXXX"
                   className="w-full text-xs bg-slate-50 border border-slate-200 text-slate-700 font-mono rounded-xl p-3 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                />
+              </div>
+
+              {/* Correo de Alerta Padre / Tutor */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 flex items-center gap-1">
+                  <Mail className="w-3.5 h-3.5 text-slate-400" /> Correo del Padre / Tutor (Alertas)
+                </label>
+                <input
+                  type="email"
+                  value={correoPadre}
+                  onChange={(e) => setCorreoPadre(e.target.value)}
+                  placeholder="ejemplo@correo.com"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 text-slate-700 rounded-xl p-3 outline-none focus:border-blue-500 focus:bg-white transition-all"
                 />
               </div>
 

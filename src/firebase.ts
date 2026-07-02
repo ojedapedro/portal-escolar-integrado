@@ -126,6 +126,7 @@ export async function addAlumno(alumno: Alumno): Promise<void> {
         foto: alumno.foto,
         grado: alumno.grado,
         grupo: alumno.grupo,
+        parentEmail: alumno.parentEmail || "",
         historialAcademico: alumno.historialAcademico || []
       });
       return;

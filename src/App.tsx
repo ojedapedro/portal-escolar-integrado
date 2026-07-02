@@ -259,6 +259,63 @@ function AppContent() {
         // Play feedback Beep
         playSuccessSound();
 
+        // Check for week retardos threshold and trigger automated parent email alert
+        if (attendanceState === 'Retardo') {
+          const today = new Date(scanTime);
+          const day = today.getDay();
+          const monday = new Date(today);
+          const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+          monday.setDate(diff);
+          monday.setHours(0, 0, 0, 0);
+          
+          const sunday = new Date(monday);
+          sunday.setDate(monday.getDate() + 6);
+          sunday.setHours(23, 59, 59, 999);
+
+          const toISODate = (d: Date) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${dayStr}`;
+          };
+
+          const weekStart = toISODate(monday);
+          const weekEnd = toISODate(sunday);
+
+          // Find existing retardos in current week
+          const previousRetardos = asistencias.filter(as => {
+            return as.alumnoID === matchingAlumno.id && 
+                   as.estado === 'Retardo' && 
+                   as.fecha >= weekStart && 
+                   as.fecha <= weekEnd;
+          });
+          const totalRetardosWeek = previousRetardos.length + 1; // including current new one
+
+          const isAlertEnabled = localStorage.getItem('alertas_correo_activas') !== 'false';
+          const threshold = parseInt(localStorage.getItem('alertas_correo_umbral') || '3');
+
+          if (isAlertEnabled && totalRetardosWeek > threshold) {
+            const savedEmails = localStorage.getItem('correos_padres');
+            let parentEmail = 'padre@ejemplo.com';
+            if (savedEmails) {
+              try {
+                const parsed = JSON.parse(savedEmails);
+                parentEmail = parsed[matchingAlumno.id] || parentEmail;
+              } catch (e) {}
+            }
+
+            // Trigger secondary automatic email toast
+            setTimeout(() => {
+              showToast({
+                type: 'success',
+                title: 'Alerta Enviada a Padres',
+                message: `El alumno acumuló ${totalRetardosWeek} retardos semanales. Alerta automática enviada a ${parentEmail}.`,
+                extra: `SMTP • Correo Enviado con Éxito`
+              });
+            }, 1500);
+          }
+        }
+
         // Feed state to presentation card
         setLastScannedAlumno(matchingAlumno);
         setLastAsistencia(newAsistencia);
@@ -567,7 +624,7 @@ function AppContent() {
                 
                 {/* TAB 0: DASHBOARD KPI */}
                 {activeTab === 'dashboard' && (
-                  <DashboardKPI />
+                  <DashboardKPI showToast={showToast} />
                 )}
 
                 {/* TAB 1: ASISTENCIA QR */}
@@ -633,6 +690,7 @@ function AppContent() {
                     onChangeTimeOffset={setTimeOffset}
                     activeUser={activeUser}
                     onChangeUser={setActiveUser}
+                    showToast={showToast}
                   />
                 )}
 

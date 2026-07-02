@@ -4,12 +4,13 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Alumno, Asistencia, ReciboPago, InventarioItem } from '../types';
+import { Alumno, Asistencia, ReciboPago, InventarioItem, ToastMessage } from '../types';
 import { 
   getAlumnos, 
   getAsistencias, 
   getRecibos, 
-  getInventario 
+  getInventario,
+  addAsistencia
 } from '../firebase';
 import { 
   TrendingUp, 
@@ -29,9 +30,16 @@ import {
   Briefcase, 
   ShoppingBag,
   Award,
-  CalendarCheck
+  CalendarCheck,
+  Mail,
+  Bell,
+  Send,
+  Save,
+  Settings2,
+  Sparkle,
+  Plus
 } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   ResponsiveContainer, 
   LineChart, 
@@ -84,7 +92,7 @@ const CustomPieTooltip = ({ active, payload }: any) => {
   return null;
 };
 
-export default function DashboardKPI() {
+export default function DashboardKPI({ showToast }: { showToast?: (toast: Omit<ToastMessage, 'id'>) => void }) {
   const [alumnos, setAlumnos] = useState<Alumno[]>([]);
   const [asistencias, setAsistencias] = useState<Asistencia[]>([]);
   const [recibos, setRecibos] = useState<ReciboPago[]>([]);
@@ -94,6 +102,127 @@ export default function DashboardKPI() {
   // Filter selection state for financial and attendance trends
   const [financeTimeframe, setFinanceTimeframe] = useState<'all' | 'monthly' | 'spei' | 'cash'>('all');
   const [selectedGradeFilter, setSelectedGradeFilter] = useState<string>('Todos');
+
+  // Configuración de Alertas por Correo
+  const [alertasActivas, setAlertasActivas] = useState<boolean>(() => {
+    const saved = localStorage.getItem('alertas_correo_activas');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [umbralRetardos, setUmbralRetardos] = useState<number>(() => {
+    const saved = localStorage.getItem('alertas_correo_umbral');
+    return saved !== null ? parseInt(saved) : 3;
+  });
+  const [asuntoTemplate, setAsuntoTemplate] = useState<string>(() => {
+    const saved = localStorage.getItem('alertas_correo_asunto');
+    return saved || 'Alerta de Asistencias: Acumulación de Retardos Semanales';
+  });
+  const [cuerpoTemplate, setCuerpoTemplate] = useState<string>(() => {
+    const saved = localStorage.getItem('alertas_correo_cuerpo');
+    return saved || 'Estimado padre de familia de {alumno},\n\nLe informamos que su hijo(a) ha acumulado {retardos} retardos durante la presente semana en el Instituto San Agustín.\n\nSolicitamos atentamente su apoyo para conversar con su hijo(a) y garantizar la puntualidad al plantel. El ingreso puntual es clave para su desempeño académico y formativo.\n\nAtentamente,\nDirección de Control Escolar';
+  });
+  const [correosPadres, setCorreosPadres] = useState<{ [key: string]: string }>(() => {
+    const saved = localStorage.getItem('correos_padres');
+    if (saved) return JSON.parse(saved);
+    // Default initial parent emails
+    return {
+      'ALUM-2026-001': 'padre.sofia@gmail.com',
+      'ALUM-2026-002': 'tutor.mateo@hotmail.com',
+      'ALUM-2026-003': 'familia.hernandez@outlook.com',
+      'ALUM-2026-004': 'martinez.tutor@gmail.com',
+      'ALUM-2026-005': 'lopez.duarte@yahoo.com'
+    };
+  });
+
+  // State to handle current week dates
+  const [startOfWeekStr, setStartOfWeekStr] = useState<string>('');
+  const [endOfWeekStr, setEndOfWeekStr] = useState<string>('');
+
+  // Editing state for emails
+  const [editingEmailId, setEditingEmailId] = useState<string | null>(null);
+  const [editingEmailValue, setEditingEmailValue] = useState<string>('');
+
+  // Email simulation preview modal states
+  const [previewStudent, setPreviewStudent] = useState<any | null>(null);
+  const [sendingEmail, setSendingEmail] = useState<boolean>(false);
+
+  useEffect(() => {
+    const today = new Date(); // Current date e.g. 2026-07-02
+    const day = today.getDay(); // 0-6
+    
+    // Start of week (Monday)
+    const monday = new Date(today);
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+    monday.setDate(diff);
+    monday.setHours(0, 0, 0, 0);
+    
+    // End of week (Sunday)
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
+
+    const toISODate = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const dayStr = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${dayStr}`;
+    };
+
+    setStartOfWeekStr(toISODate(monday));
+    setEndOfWeekStr(toISODate(sunday));
+  }, []);
+
+  const handleSaveAlertsConfig = () => {
+    localStorage.setItem('alertas_correo_activas', String(alertasActivas));
+    localStorage.setItem('alertas_correo_umbral', String(umbralRetardos));
+    localStorage.setItem('alertas_correo_asunto', asuntoTemplate);
+    localStorage.setItem('alertas_correo_cuerpo', cuerpoTemplate);
+    localStorage.setItem('correos_padres', JSON.stringify(correosPadres));
+    
+    if (showToast) {
+      showToast({
+        type: 'success',
+        title: 'Configuración Guardada',
+        message: 'Las políticas de alerta y correos de contacto han sido actualizados con éxito.'
+      });
+    }
+  };
+
+  const handleSimularRetardo = async (alumno: Alumno) => {
+    // Get list of previous retardos of this student in this week
+    const currentRetardosCount = asistencias.filter(as => as.alumnoID === alumno.id && as.estado === 'Retardo').length;
+    
+    // We add a retardo on a different day of the week to make it look realistic!
+    const days = ['2026-06-29', '2026-06-30', '2026-07-01', '2026-07-02'];
+    const chosenDay = days[Math.min(currentRetardosCount, days.length - 1)];
+    const chosenHour = `08:${String(Math.floor(5 + Math.random() * 15)).padStart(2, '0')}:${String(Math.floor(Math.random() * 60)).padStart(2, '0')}`;
+
+    const newAsistencia: Asistencia = {
+      alumnoID: alumno.id,
+      nombreAlumno: `${alumno.nombre} ${alumno.apellidos}`,
+      grado: alumno.grado,
+      fecha: chosenDay,
+      horaExacta: chosenHour,
+      estado: 'Retardo'
+    };
+
+    try {
+      await addAsistencia(newAsistencia);
+      
+      if (showToast) {
+        showToast({
+          type: 'retardo',
+          title: `Retardo Simulado: ${alumno.nombre}`,
+          message: `Se añadió un retardo para pruebas el día ${chosenDay} a las ${chosenHour}.`,
+          foto: alumno.foto
+        });
+      }
+      
+      // Reload dashboard data
+      await loadDashboardData();
+    } catch (err) {
+      console.error("Error al simular retardo:", err);
+    }
+  };
 
   useEffect(() => {
     loadDashboardData();
@@ -198,6 +327,30 @@ export default function DashboardKPI() {
         lateArrivals++;
       }
     }
+  });
+
+  const alumnosConRetardosSemanales = alumnos.map((al) => {
+    // Find all retardos of this student in the current week
+    const retardosSemana = asistencias.filter(as => {
+      const isRetardo = as.estado === 'Retardo';
+      const isSameAlumno = as.alumnoID === al.id;
+      const isWithinWeek = startOfWeekStr && endOfWeekStr
+        ? as.fecha >= startOfWeekStr && as.fecha <= endOfWeekStr
+        : true; // fallback
+      return isRetardo && isSameAlumno && isWithinWeek;
+    });
+
+    const parentEmail = correosPadres[al.id] || '';
+    const tardyCount = retardosSemana.length;
+    const isFlagged = tardyCount >= umbralRetardos;
+
+    return {
+      ...al,
+      tardyCount,
+      parentEmail,
+      isFlagged,
+      retardosSemana // details of each tardy
+    };
   });
 
   // 3. FINANCIAL KPI CALCULATIONS
@@ -814,6 +967,392 @@ export default function DashboardKPI() {
         </div>
 
       </div>
+
+      {/* SECCIÓN NUEVA: Monitoreo y Configuración de Alertas por Correo */}
+      <div id="alertas-correo-seccion" className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-100 dark:border-slate-800 p-6 space-y-6 shadow-sm">
+        {/* Header de la sección */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4 gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-rose-50 dark:bg-rose-950/30 text-rose-650 dark:text-rose-400 rounded-2xl shadow-sm">
+              <Bell className="w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-slate-850 dark:text-white flex items-center gap-2">
+                Alertas de Retardos Semanales <span className="text-[10px] font-semibold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 px-2 py-0.5 rounded-full uppercase tracking-wider">Módulo Automático</span>
+              </h3>
+              <p className="text-[11px] text-slate-450 dark:text-slate-500">Notificación automática por correo electrónico a tutores al acumular más de {umbralRetardos} retardos semanales</p>
+            </div>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                const defaultEmails = {
+                  'ALUM-2026-001': 'padre.sofia@gmail.com',
+                  'ALUM-2026-002': 'tutor.mateo@hotmail.com',
+                  'ALUM-2026-003': 'familia.hernandez@outlook.com',
+                  'ALUM-2026-004': 'martinez.tutor@gmail.com',
+                  'ALUM-2026-005': 'lopez.duarte@yahoo.com'
+                };
+                setCorreosPadres(defaultEmails);
+                localStorage.setItem('correos_padres', JSON.stringify(defaultEmails));
+                if (showToast) {
+                  showToast({
+                    type: 'info',
+                    title: 'Contactos Restablecidos',
+                    message: 'Se han restablecido los correos electrónicos de los tutores.'
+                  });
+                }
+              }}
+              className="px-3 py-1.5 text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-300 bg-slate-50 dark:bg-slate-850 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors cursor-pointer border border-slate-200 dark:border-slate-750"
+            >
+              Restablecer Correos
+            </button>
+            <button
+              onClick={handleSaveAlertsConfig}
+              className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" /> Guardar Configuración
+            </button>
+          </div>
+        </div>
+
+        {/* Layout Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          
+          {/* Col 1: Rules & Templates (5/12) */}
+          <div className="lg:col-span-5 bg-slate-50/50 dark:bg-slate-950/20 border border-slate-150/60 dark:border-slate-800 rounded-2xl p-5 space-y-4">
+            <h4 className="font-bold text-xs text-slate-750 dark:text-slate-200 flex items-center gap-1.5 border-b border-slate-150 dark:border-slate-850 pb-2">
+              <Settings2 className="w-4 h-4 text-indigo-500" /> Reglas de Negocio y Plantilla
+            </h4>
+
+            {/* Enable switch */}
+            <div className="flex items-center justify-between p-3 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl">
+              <div>
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-200 block">Enviar Alertas Automáticas</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-550">Servicio SMTP en segundo plano</span>
+              </div>
+              <button
+                onClick={() => setAlertasActivas(!alertasActivas)}
+                className="p-1 rounded-full transition-all cursor-pointer"
+                aria-label="Toggle Alertas Automáticas"
+              >
+                <div className={`w-11 h-6 rounded-full p-0.5 transition-colors ${alertasActivas ? 'bg-indigo-600' : 'bg-slate-350 dark:bg-slate-700'}`}>
+                  <div className={`bg-white w-5 h-5 rounded-full shadow-md transform transition-transform ${alertasActivas ? 'translate-x-5' : 'translate-x-0'}`} />
+                </div>
+              </button>
+            </div>
+
+            {/* Threshold count slider */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between text-xs font-bold text-slate-650 dark:text-slate-450">
+                <span>Disparar al acumular más de:</span>
+                <span className="font-mono text-indigo-600 dark:text-indigo-400 font-extrabold">{umbralRetardos} retardos</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="1"
+                  max="5"
+                  value={umbralRetardos}
+                  onChange={(e) => setUmbralRetardos(parseInt(e.target.value))}
+                  className="flex-1 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-600"
+                />
+                <span className="text-xs font-mono font-bold px-2 py-1 bg-white dark:bg-slate-900 border border-slate-150 dark:border-slate-800 rounded-lg text-slate-700 dark:text-slate-300 min-w-[32px] text-center">
+                  {umbralRetardos}
+                </span>
+              </div>
+              <span className="text-[9px] text-slate-400 dark:text-slate-500 block leading-tight">
+                Se enviará una alerta automática por correo electrónico al tutor cuando el alumno sume <strong>más de {umbralRetardos} retardos</strong> en la misma semana escolar.
+              </span>
+            </div>
+
+            {/* Subject Template */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-650 dark:text-slate-450 block">
+                Asunto del Correo:
+              </label>
+              <input
+                type="text"
+                value={asuntoTemplate}
+                onChange={(e) => setAsuntoTemplate(e.target.value)}
+                className="w-full text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-850 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                placeholder="Escriba el asunto..."
+              />
+            </div>
+
+            {/* Body Template */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-655 dark:text-slate-455">
+                  Cuerpo del Correo:
+                </label>
+                <span className="text-[8px] text-slate-400 dark:text-slate-500 font-mono">Tokens: {"{alumno}"} {"{retardos}"} {"{grupo}"}</span>
+              </div>
+              <textarea
+                value={cuerpoTemplate}
+                onChange={(e) => setCuerpoTemplate(e.target.value)}
+                rows={6}
+                className="w-full text-xs font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 font-sans leading-relaxed"
+                placeholder="Escriba el cuerpo..."
+              />
+            </div>
+          </div>
+
+          {/* Col 2: Students list & Parent emails (7/12) */}
+          <div className="lg:col-span-7 space-y-4">
+            <div className="flex justify-between items-center">
+              <h4 className="font-bold text-xs text-slate-750 dark:text-slate-200 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-blue-500" /> Alumnos y Correos de Contacto de Padres
+              </h4>
+              <span className="text-[9px] font-bold text-slate-450 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-lg">
+                Semana: Lun {startOfWeekStr} a Dom {endOfWeekStr}
+              </span>
+            </div>
+
+            <div className="space-y-2.5 max-h-[395px] overflow-y-auto pr-1">
+              {alumnosConRetardosSemanales.map((al) => {
+                const hasAlert = al.tardyCount > umbralRetardos;
+                const isEditing = editingEmailId === al.id;
+
+                return (
+                  <div 
+                    key={al.id} 
+                    className={`p-3.5 rounded-2xl border transition-all ${
+                      hasAlert 
+                        ? 'bg-rose-50/40 dark:bg-rose-950/10 border-rose-200/80 dark:border-rose-900/60 shadow-sm shadow-rose-500/5' 
+                        : 'bg-white dark:bg-slate-900 border-slate-150 dark:border-slate-850'
+                    } hover:shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3`}
+                  >
+                    {/* Student Info */}
+                    <div className="flex items-center gap-3">
+                      <img 
+                        src={al.foto} 
+                        alt={al.nombre} 
+                        className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700" 
+                      />
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-xs text-slate-850 dark:text-slate-100">
+                            {al.nombre} {al.apellidos}
+                          </span>
+                          {hasAlert && (
+                            <span className="inline-flex items-center gap-0.5 bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 font-extrabold text-[8px] px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                              <Bell className="w-2.5 h-2.5" /> Alerta Activa
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-450 dark:text-slate-500 font-medium block">
+                          {al.grado} • Grupo "{al.grupo}"
+                        </span>
+
+                        {/* Editable Parent Email */}
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          <span className="text-[9px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">Tutor:</span>
+                          {isEditing ? (
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="email"
+                                value={editingEmailValue}
+                                onChange={(e) => setEditingEmailValue(e.target.value)}
+                                className="text-[10px] font-medium font-mono px-2 py-0.5 border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 rounded text-slate-800 dark:text-white focus:outline-none"
+                                placeholder="correo@ejemplo.com"
+                                autoFocus
+                              />
+                              <button
+                                onClick={() => {
+                                  setCorreosPadres(prev => ({ ...prev, [al.id]: editingEmailValue.trim() }));
+                                  setEditingEmailId(null);
+                                }}
+                                className="p-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[9px] font-bold cursor-pointer"
+                              >
+                                <Save className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono font-bold text-slate-650 dark:text-slate-350 bg-slate-50 dark:bg-slate-950/40 px-1.5 py-0.5 rounded border border-slate-150/40 dark:border-slate-850">
+                                {al.parentEmail || 'No asignado'}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setEditingEmailId(al.id);
+                                  setEditingEmailValue(al.parentEmail);
+                                }}
+                                className="text-[9px] font-black text-indigo-650 dark:text-indigo-400 hover:underline cursor-pointer"
+                              >
+                                Configurar
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Actions and retardos sum */}
+                    <div className="flex md:flex-col items-center md:items-end justify-between gap-2 border-t md:border-t-0 border-slate-100 dark:border-slate-850 pt-2 md:pt-0 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <div className="text-right">
+                          <span className="text-[8px] text-slate-400 dark:text-slate-500 font-bold block uppercase tracking-wider">Tardanzas</span>
+                          <span className={`text-xs font-black block font-mono ${
+                            al.tardyCount >= umbralRetardos 
+                              ? 'text-rose-600 dark:text-rose-450' 
+                              : al.tardyCount > 0 
+                              ? 'text-amber-500 dark:text-amber-400' 
+                              : 'text-slate-500 dark:text-slate-450'
+                          }`}>
+                            {al.tardyCount} retardo{al.tardyCount !== 1 ? 's' : ''}
+                          </span>
+                        </div>
+                        
+                        {/* Simulation tool to +1 delay */}
+                        <button
+                          onClick={() => handleSimularRetardo(al)}
+                          title="Simular un retardo para pruebas"
+                          className="p-1 hover:bg-slate-150 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white rounded-lg border border-slate-200 dark:border-slate-800 transition-colors cursor-pointer flex items-center justify-center w-7 h-7"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Launch preview simulated trigger */}
+                      <div>
+                        {al.parentEmail ? (
+                          <button
+                            onClick={() => setPreviewStudent(al)}
+                            className={`flex items-center gap-1 font-bold text-[10px] px-3 py-1.5 rounded-xl transition-all cursor-pointer ${
+                              hasAlert 
+                                ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm' 
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-650 dark:text-slate-300 hover:bg-slate-150 dark:hover:bg-slate-750'
+                            }`}
+                          >
+                            <Mail className="w-3 h-3" />
+                            {hasAlert ? 'Ver Alerta' : 'Previsualizar'}
+                          </button>
+                        ) : (
+                          <span className="text-[9px] text-slate-400 italic">Asigne correo para simular</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* MODAL DE SIMULACIÓN DE CORREO ELECTRÓNICO */}
+      <AnimatePresence>
+        {previewStudent && (
+          <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col font-sans"
+            >
+              {/* Browser bar headers */}
+              <div className="bg-slate-950 text-white px-5 py-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-full bg-rose-500" />
+                  <div className="w-3 h-3 rounded-full bg-amber-500" />
+                  <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                  <span className="text-[10px] font-mono font-bold text-slate-400 ml-2">Servicio de Alertas SMTP (Simulado)</span>
+                </div>
+                <button
+                  onClick={() => setPreviewStudent(null)}
+                  className="text-slate-400 hover:text-white text-xs font-black cursor-pointer transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Envelope details */}
+              <div className="p-5 border-b border-slate-100 dark:border-slate-850 space-y-3 bg-slate-50/50 dark:bg-slate-950/10 shrink-0">
+                <div className="flex items-center text-xs">
+                  <span className="w-16 font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-[10px]">De:</span>
+                  <span className="font-semibold text-slate-700 dark:text-slate-300 font-mono text-[11px]">alertas.escolares@colegio-agustin.edu.mx</span>
+                </div>
+                <div className="flex items-center text-xs">
+                  <span className="w-16 font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-[10px]">Para:</span>
+                  <span className="font-bold text-indigo-650 dark:text-indigo-400 font-mono text-[11px] bg-indigo-50/60 dark:bg-indigo-950/40 px-2 py-0.5 rounded border border-indigo-100/50 dark:border-indigo-900/30">
+                    {previewStudent.parentEmail}
+                  </span>
+                </div>
+                <div className="flex items-center text-xs">
+                  <span className="w-16 font-extrabold text-slate-400 dark:text-slate-500 uppercase tracking-wider text-[10px]">Asunto:</span>
+                  <span className="font-bold text-slate-850 dark:text-slate-100 text-[11px]">
+                    {asuntoTemplate
+                      .replace('{alumno}', `${previewStudent.nombre} ${previewStudent.apellidos}`)
+                      .replace('{retardos}', String(previewStudent.tardyCount))
+                      .replace('{grupo}', `${previewStudent.grado} "${previewStudent.grupo}"`)
+                    }
+                  </span>
+                </div>
+              </div>
+
+              {/* Email Content */}
+              <div className="p-6 flex-1 min-h-[160px] text-xs font-semibold text-slate-700 dark:text-slate-350 bg-white dark:bg-slate-900 leading-relaxed overflow-y-auto whitespace-pre-line border-b border-slate-150 dark:border-slate-850">
+                {cuerpoTemplate
+                  .replace('{alumno}', `${previewStudent.nombre} ${previewStudent.apellidos}`)
+                  .replace('{retardos}', String(previewStudent.tardyCount))
+                  .replace('{grupo}', `${previewStudent.grado} "${previewStudent.grupo}"`)
+                }
+              </div>
+
+              {/* Modal footer controls */}
+              <div className="p-4 bg-slate-50 dark:bg-slate-950/40 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-400">
+                  <Sparkle className="w-3.5 h-3.5 text-rose-500 animate-spin" />
+                  <span>Configuración SMTP act./desact.</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPreviewStudent(null)}
+                    className="px-4 py-2 text-xs font-extrabold text-slate-500 hover:text-slate-850 dark:hover:text-white cursor-pointer"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setSendingEmail(true);
+                      setTimeout(() => {
+                        setSendingEmail(false);
+                        setPreviewStudent(null);
+                        
+                        if (showToast) {
+                          showToast({
+                            type: 'success',
+                            title: 'Correo Despachado',
+                            message: `Se envió la alerta de puntualidad a ${previewStudent.parentEmail} correctamente.`,
+                            extra: `ID: ${previewStudent.id} • ${new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
+                          });
+                        }
+                      }, 1500);
+                    }}
+                    disabled={sendingEmail}
+                    className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer"
+                  >
+                    {sendingEmail ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Enviando por SMTP...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-3.5 h-3.5" />
+                        <span>Enviar Correo de Prueba</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

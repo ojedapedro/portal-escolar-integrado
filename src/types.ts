@@ -5,6 +5,7 @@ export interface Alumno {
   foto: string;
   grado: string;
   grupo: string;
+  parentEmail?: string;
   historialAcademico?: HistorialItem[];
 }
 

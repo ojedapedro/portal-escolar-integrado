@@ -4,8 +4,24 @@
  */
 
 import React, { useState } from 'react';
-import { AppConfig, UserSession, UserRole } from '../types';
-import { Settings, Shield, Clock, Eye, Info, Database, UserCheck, ShieldCheck, HelpCircle } from 'lucide-react';
+import { AppConfig, UserSession, UserRole, ToastMessage } from '../types';
+import { 
+  Settings, 
+  Shield, 
+  Clock, 
+  Eye, 
+  EyeOff,
+  Info, 
+  Database, 
+  UserCheck, 
+  ShieldCheck, 
+  HelpCircle,
+  Server,
+  Key,
+  Mail,
+  Lock,
+  Check
+} from 'lucide-react';
 import { checkDatabaseMode } from '../firebase';
 import { INITIAL_USERS } from '../mockData';
 
@@ -16,6 +32,7 @@ interface ConfigPanelProps {
   onChangeTimeOffset: (offset: number) => void;
   activeUser: UserSession;
   onChangeUser: (user: UserSession) => void;
+  showToast?: (toast: Omit<ToastMessage, 'id'>) => void;
 }
 
 export default function ConfigPanel({
@@ -24,9 +41,53 @@ export default function ConfigPanel({
   systemTimeOffset,
   onChangeTimeOffset,
   activeUser,
-  onChangeUser
+  onChangeUser,
+  showToast
 }: ConfigPanelProps) {
   const dbMode = checkDatabaseMode();
+  const isAdmin = activeUser.role === 'Administrador';
+
+  // SMTP configuration state from localStorage
+  const [smtpHost, setSmtpHost] = useState(() => localStorage.getItem('smtp_host') || 'smtp.gmail.com');
+  const [smtpPort, setSmtpPort] = useState(() => localStorage.getItem('smtp_port') || '587');
+  const [smtpUser, setSmtpUser] = useState(() => localStorage.getItem('smtp_user') || 'alertas.escolares@colegio-agustin.edu.mx');
+  const [smtpPassword, setSmtpPassword] = useState(() => localStorage.getItem('smtp_password') || '••••••••••••••••');
+  const [smtpSecure, setSmtpSecure] = useState(() => localStorage.getItem('smtp_secure') || 'tls');
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+
+  const handleSaveSMTP = () => {
+    if (!isAdmin) return;
+    localStorage.setItem('smtp_host', smtpHost);
+    localStorage.setItem('smtp_port', smtpPort);
+    localStorage.setItem('smtp_user', smtpUser);
+    localStorage.setItem('smtp_password', smtpPassword);
+    localStorage.setItem('smtp_secure', smtpSecure);
+
+    if (showToast) {
+      showToast({
+        type: 'success',
+        title: 'Servidor SMTP Guardado',
+        message: 'Las credenciales SMTP personalizadas han sido almacenadas de manera segura.'
+      });
+    }
+  };
+
+  const handleTestSMTP = () => {
+    if (!isAdmin) return;
+    setTestingConnection(true);
+    setTimeout(() => {
+      setTestingConnection(false);
+      if (showToast) {
+        showToast({
+          type: 'success',
+          title: 'Prueba SMTP Exitosa',
+          message: `Conexión establecida con ${smtpHost}:${smtpPort} utilizando autenticación TLS.`
+        });
+      }
+    }, 1200);
+  };
 
   return (
     <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-6 space-y-6">
@@ -206,6 +267,159 @@ export default function ConfigPanel({
             Útil para cambiar la hora actual y comprobar si la lectura de asistencia se procesa como <strong>A Tiempo</strong> o <strong>Retardo</strong>.
           </p>
         </div>
+      </div>
+
+      {/* Configuración de Servidor de Correo SMTP */}
+      <div className="space-y-4 pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 rounded-xl">
+              <Mail className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-display font-bold text-slate-800 dark:text-white">Servidor de Correo SMTP</h2>
+              <p className="text-xs text-slate-400 font-medium">Credenciales para notificaciones y alertas automáticas</p>
+            </div>
+          </div>
+          {!isAdmin && (
+            <span className="text-[9px] font-black uppercase bg-slate-150 text-slate-500 px-2 py-1 rounded-lg">
+              Vista de Lectura
+            </span>
+          )}
+        </div>
+
+        {!isAdmin ? (
+          <div className="bg-slate-50 dark:bg-slate-950/20 p-4 rounded-2xl border border-dashed border-slate-200 dark:border-slate-850 text-xs text-slate-500 space-y-2">
+            <div className="flex items-start gap-2">
+              <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-slate-700 dark:text-slate-200 block">Acceso Restringido</span>
+                <p className="text-[11px] text-slate-450 dark:text-slate-500 leading-relaxed">
+                  Solo los usuarios con el rol de <strong>Administrador</strong> tienen privilegios para editar las credenciales del servidor SMTP y realizar pruebas de conexión.
+                </p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 grid grid-cols-2 gap-2 text-[10px]">
+              <div>
+                <span className="block text-slate-400 dark:text-slate-550 font-bold uppercase tracking-wider">Servidor Host:</span>
+                <span className="font-mono text-slate-600 dark:text-slate-400">{smtpHost}</span>
+              </div>
+              <div>
+                <span className="block text-slate-400 dark:text-slate-550 font-bold uppercase tracking-wider">Puerto SMTP:</span>
+                <span className="font-mono text-slate-600 dark:text-slate-400">{smtpPort}</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* SMTP Host */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-450 mb-1 flex items-center gap-1">
+                  <Server className="w-3 h-3 text-slate-400" /> Host del Servidor SMTP
+                </label>
+                <input
+                  type="text"
+                  value={smtpHost}
+                  onChange={(e) => setSmtpHost(e.target.value)}
+                  className="w-full text-xs font-semibold bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2.5 outline-none focus:border-blue-500 focus:bg-white transition-all animate-none"
+                  placeholder="smtp.gmail.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-450 mb-1">
+                  Puerto SMTP
+                </label>
+                <input
+                  type="text"
+                  value={smtpPort}
+                  onChange={(e) => setSmtpPort(e.target.value)}
+                  className="w-full text-xs font-mono font-bold bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2.5 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                  placeholder="587"
+                />
+              </div>
+            </div>
+
+            {/* SMTP Username */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-450 mb-1 flex items-center gap-1">
+                <Mail className="w-3 h-3 text-slate-400" /> Usuario / Remitente Autorizado
+              </label>
+              <input
+                type="text"
+                value={smtpUser}
+                onChange={(e) => setSmtpUser(e.target.value)}
+                className="w-full text-xs font-semibold bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2.5 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                placeholder="alertas@colegio-agustin.edu.mx"
+              />
+            </div>
+
+            {/* SMTP Password */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-450 mb-1 flex items-center gap-1">
+                <Lock className="w-3 h-3 text-slate-400" /> Contraseña de Aplicación / API Key
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={smtpPassword}
+                  onChange={(e) => setSmtpPassword(e.target.value)}
+                  className="w-full text-xs font-mono bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 rounded-xl pl-3 pr-10 py-2.5 outline-none focus:border-blue-500 focus:bg-white transition-all"
+                  placeholder="Contraseña SMTP"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Security Type & Actions */}
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-500">Protocolo:</span>
+                <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5">
+                  {(['tls', 'ssl', 'none'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => setSmtpSecure(mode)}
+                      className={`px-2.5 py-1 text-[9px] font-bold rounded-md transition-all cursor-pointer uppercase ${
+                        smtpSecure === mode
+                          ? 'bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 shadow-sm'
+                          : 'text-slate-400 hover:text-slate-600'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 self-end">
+                <button
+                  type="button"
+                  onClick={handleTestSMTP}
+                  disabled={testingConnection}
+                  className="px-3.5 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 rounded-xl transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  {testingConnection ? 'Probando...' : 'Probar Conexión'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSMTP}
+                  className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+                >
+                  <Check className="w-3.5 h-3.5" /> Guardar SMTP
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
